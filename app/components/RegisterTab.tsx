@@ -7,10 +7,39 @@ import type { ParsedResultRow } from "@/types/database";
 import { FileUp, Loader2, Save } from "lucide-react";
 
 function cellValue(
-  v: string | number | null | undefined
+  v: string | number | null | undefined | unknown
 ): string {
   if (v === null || v === undefined) return "";
+  if (typeof v === "object" || Array.isArray(v)) return String(v);
   return String(v);
+}
+
+/** パース済み1行を表示用に正規化（オブジェクト/配列を文字列化） */
+function safeRow(row: ParsedResultRow | null | undefined): ParsedResultRow {
+  if (row == null || typeof row !== "object") {
+    return {
+      athlete_name: "",
+      category: null,
+      age_grade: null,
+      snatch_best: null,
+      snatch_rank: null,
+      cj_best: null,
+      cj_rank: null,
+      total_weight: null,
+      total_rank: null,
+    };
+  }
+  return {
+    athlete_name: cellValue(row.athlete_name),
+    category: row.category == null ? null : cellValue(row.category),
+    age_grade: row.age_grade == null ? null : cellValue(row.age_grade),
+    snatch_best: typeof row.snatch_best === "number" && Number.isFinite(row.snatch_best) ? row.snatch_best : null,
+    snatch_rank: typeof row.snatch_rank === "number" && Number.isFinite(row.snatch_rank) ? row.snatch_rank : null,
+    cj_best: typeof row.cj_best === "number" && Number.isFinite(row.cj_best) ? row.cj_best : null,
+    cj_rank: typeof row.cj_rank === "number" && Number.isFinite(row.cj_rank) ? row.cj_rank : null,
+    total_weight: typeof row.total_weight === "number" && Number.isFinite(row.total_weight) ? row.total_weight : null,
+    total_rank: typeof row.total_rank === "number" && Number.isFinite(row.total_rank) ? row.total_rank : null,
+  };
 }
 
 export function RegisterTab() {
@@ -36,14 +65,32 @@ export function RegisterTab() {
   const handleParse = () => {
     if (!file) return;
     setParseError(null);
+    setSaveMessage(null);
     const fd = new FormData();
     fd.set("file", file);
     startParseTransition(async () => {
-      const result = await parsePdf(fd);
-      if (result.success) {
-        setRows(result.rows);
-      } else {
-        setParseError(result.error);
+      try {
+        const result = await parsePdf(fd);
+        if (!result) {
+          setParseError("データの抽出に失敗しました。");
+          setRows(null);
+          return;
+        }
+        if (result.success) {
+          const rawRows = result.rows;
+          if (Array.isArray(rawRows)) {
+            setRows(rawRows);
+            setParseError(null);
+          } else {
+            setParseError("データの抽出に失敗しました。");
+            setRows(null);
+          }
+        } else {
+          setParseError(result.error ?? "データの抽出に失敗しました。");
+          setRows(null);
+        }
+      } catch {
+        setParseError("データの抽出に失敗しました。");
         setRows(null);
       }
     });
@@ -51,9 +98,10 @@ export function RegisterTab() {
 
   const updateRow = (index: number, field: keyof ParsedResultRow, value: string | number | null) => {
     setRows((prev) => {
-      if (!prev) return prev;
-      const next = [...prev];
-      const r = { ...next[index] };
+      const list = prev ?? [];
+      if (!Array.isArray(list) || index < 0 || index >= list.length) return prev;
+      const next = [...list];
+      const r = safeRow(next[index]);
       if (field === "athlete_name") r.athlete_name = String(value ?? "").trim();
       else if (field === "category") r.category = value === "" ? null : String(value).trim();
       else if (field === "age_grade") r.age_grade = value === "" ? null : String(value).trim();
@@ -67,7 +115,8 @@ export function RegisterTab() {
   };
 
   const handleSave = () => {
-    if (!rows || rows.length === 0) {
+    const list = rows ?? [];
+    if (!Array.isArray(list) || list.length === 0) {
       setSaveMessage({ type: "error", text: "保存するデータがありません。" });
       return;
     }
@@ -78,7 +127,7 @@ export function RegisterTab() {
     }
     setSaveMessage(null);
     startSaveTransition(async () => {
-      const result = await saveCompetitionAndResults(year, competitionName.trim(), rows);
+      const result = await saveCompetitionAndResults(year, competitionName.trim(), list);
       if (result.success) {
         setSaveMessage({ type: "ok", text: "データベースに保存しました。" });
         setRows(null);
@@ -129,7 +178,10 @@ export function RegisterTab() {
       )}
 
       {/* 確認・修正テーブル */}
-      {rows && rows.length > 0 && (
+      {(() => {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        if (safeRows.length === 0) return null;
+        return (
         <>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             下表で内容を確認・修正し、対象年度と大会名を入力してから「データベースに保存」を押してください。
@@ -150,7 +202,9 @@ export function RegisterTab() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
+                {safeRows.map((row, i) => {
+                  const r = safeRow(row);
+                  return (
                   <tr
                     key={i}
                     className="border-b border-zinc-100 dark:border-zinc-700/70"
@@ -158,7 +212,7 @@ export function RegisterTab() {
                     <td className="px-2 py-1">
                       <input
                         type="text"
-                        value={row.athlete_name}
+                        value={r.athlete_name}
                         onChange={(e) => updateRow(i, "athlete_name", e.target.value)}
                         className="w-full min-w-[6rem] rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -166,7 +220,7 @@ export function RegisterTab() {
                     <td className="px-2 py-1">
                       <input
                         type="text"
-                        value={cellValue(row.category)}
+                        value={cellValue(r.category)}
                         onChange={(e) => updateRow(i, "category", e.target.value || null)}
                         className="w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -174,7 +228,7 @@ export function RegisterTab() {
                     <td className="px-2 py-1">
                       <input
                         type="text"
-                        value={cellValue(row.age_grade)}
+                        value={cellValue(r.age_grade)}
                         onChange={(e) => updateRow(i, "age_grade", e.target.value || null)}
                         className="w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -183,7 +237,7 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={cellValue(row.snatch_best)}
+                        value={cellValue(r.snatch_best)}
                         onChange={(e) => updateRow(i, "snatch_best", e.target.value === "" ? null : e.target.value)}
                         className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -192,7 +246,7 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={cellValue(row.snatch_rank)}
+                        value={cellValue(r.snatch_rank)}
                         onChange={(e) => updateRow(i, "snatch_rank", e.target.value === "" ? null : e.target.value)}
                         className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -201,7 +255,7 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={cellValue(row.cj_best)}
+                        value={cellValue(r.cj_best)}
                         onChange={(e) => updateRow(i, "cj_best", e.target.value === "" ? null : e.target.value)}
                         className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -210,7 +264,7 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={cellValue(row.cj_rank)}
+                        value={cellValue(r.cj_rank)}
                         onChange={(e) => updateRow(i, "cj_rank", e.target.value === "" ? null : e.target.value)}
                         className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -219,7 +273,7 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={cellValue(row.total_weight)}
+                        value={cellValue(r.total_weight)}
                         onChange={(e) => updateRow(i, "total_weight", e.target.value === "" ? null : e.target.value)}
                         className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
@@ -228,13 +282,13 @@ export function RegisterTab() {
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={cellValue(row.total_rank)}
+                        value={cellValue(r.total_rank)}
                         onChange={(e) => updateRow(i, "total_rank", e.target.value === "" ? null : e.target.value)}
                         className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                       />
                     </td>
                   </tr>
-                ))}
+                );})}
               </tbody>
             </table>
           </div>
@@ -277,7 +331,8 @@ export function RegisterTab() {
             </button>
           </div>
         </>
-      )}
+        );
+      })()}
 
       {saveMessage && (
         <p
