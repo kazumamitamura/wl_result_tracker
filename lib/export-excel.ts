@@ -70,7 +70,7 @@ export async function exportToExcel(rows: ResultRow[]): Promise<void> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("競技結果", {
     pageSetup: {
-      paperSize: ExcelJS.PaperSize.A4,
+      paperSize: 9, // A4 (isolatedModules のため enum ではなく数値)
       orientation: "landscape",
       fitToPage: true,
       fitToWidth: 1,
