@@ -33,7 +33,7 @@ export async function parsePdf(formData: FormData): Promise<ParsePdfResult> {
     const buffer = Buffer.from(await file.arrayBuffer());
     parser = new PDFParse({ data: new Uint8Array(buffer) });
     const textResult = await parser.getText();
-    const text = textResult.text ?? "";
+    const text = textResult?.text ?? "";
     console.log("=== RAW PDF TEXT START ===");
     console.log(text);
     console.log("=== RAW PDF TEXT END ===");
@@ -44,7 +44,21 @@ export async function parsePdf(formData: FormData): Promise<ParsePdfResult> {
       return { success: false, error: "PDFからテキストを抽出できませんでした。" };
     }
 
-    const rows = parseResultsFromText(text);
+    let rows: ParsedResultRow[];
+    try {
+      rows = parseResultsFromText(text);
+    } catch (parseError) {
+      const msg = parseError instanceof Error ? parseError.message : String(parseError);
+      return {
+        success: false,
+        error: `データの抽出に失敗しました: ${msg}`,
+      };
+    }
+
+    if (!Array.isArray(rows)) {
+      return { success: false, error: "データの抽出に失敗しました。（結果が不正です）" };
+    }
+
     return { success: true, rows };
   } catch (e) {
     if (parser) {
