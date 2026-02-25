@@ -34,6 +34,9 @@ export async function parsePdf(formData: FormData): Promise<ParsePdfResult> {
     parser = new PDFParse({ data: new Uint8Array(buffer) });
     const textResult = await parser.getText();
     const text = textResult.text ?? "";
+    console.log("=== RAW PDF TEXT START ===");
+    console.log(text);
+    console.log("=== RAW PDF TEXT END ===");
     await parser.destroy();
     parser = null;
 
