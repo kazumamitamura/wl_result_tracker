@@ -35,6 +35,19 @@ export type WlResultInsert = Omit<WlResult, "id" | "created_at"> & {
   created_at?: string;
 };
 
+/** PDF解析後の1行（確認・修正用。id / competition_id / created_at なし） */
+export type ParsedResultRow = {
+  athlete_name: string;
+  category: string | null;
+  age_grade: string | null;
+  snatch_best: number | null;
+  snatch_rank: number | null;
+  cj_best: number | null;
+  cj_rank: number | null;
+  total_weight: number | null;
+  total_rank: number | null;
+};
+
 export type WlResultWithCompetition = WlResult & {
   wlre_competitions?: Pick<WlCompetition, "id" | "competition_year" | "name"> | null;
 };
