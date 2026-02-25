@@ -1,14 +1,15 @@
 import type { ParsedResultRow } from "@/types/database";
 
-/** 数値として解釈できるか（重量・順位） */
-function parseNum(value: string): number | null {
-  const s = value.replace(/,/g, "").trim();
-  if (s === "" || s === "-" || s === "－") return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
+/** 階級パターン（55kg, +109kg 等） */
+const CATEGORY_REGEX = /(55|59|61|64|67|71|73|76|81|89|96|102|109|\+87|\+109)[Kk]g/g;
 
-/** 行を空白（2つ以上連続 or タブ）で分割し、空でないセルを返す */
+/** 体重パターン（55.00 等の xx.xx）※ .test() を複数回使うため g なし */
+const BODY_WEIGHT_REGEX = /\b\d{2,3}\.\d{2}\b/;
+
+/** 生年パターン（2005, 1990 等）※ .test() を複数回使うため g なし */
+const BIRTH_YEAR_REGEX = /\b(19|20)\d{2}\b/;
+
+/** 行を空白（2つ以上 or タブ）で分割 */
 function splitRow(line: string): string[] {
   return line
     .split(/\s{2,}|\t/)
@@ -16,82 +17,177 @@ function splitRow(line: string): string[] {
     .filter((c) => c.length > 0);
 }
 
-/** ヘッダー行からカラムインデックスを推測 */
-function detectColumnIndices(headers: string[]): {
-  name: number;
-  category: number | null;
-  ageGrade: number | null;
-  snatchBest: number | null;
-  snatchRank: number | null;
-  cjBest: number | null;
-  cjRank: number | null;
-  totalWeight: number | null;
-  totalRank: number | null;
-} {
-  const lower = (s: string) => s.toLowerCase().replace(/\s/g, "");
-  const idx = (keywords: string[]) => {
-    const i = headers.findIndex((h) =>
-      keywords.some((k) => lower(h).includes(k))
-    );
-    return i >= 0 ? i : null;
-  };
-  return {
-    name: idx(["選手名", "氏名", "名前", "姓名", "name"]) ?? 0,
-    category: idx(["階級", "体重", "category"]),
-    ageGrade: idx(["学年", "年齢", "年令", "age", "grade"]),
-    snatchBest: idx(["スナッチ", "snatch"]),
-    snatchRank: idx(["スナッチ順位", "snatch順位", "スナッチ順"]),
-    cjBest: idx(["c&j", "cj", "クリーン", "ジャーク", "clean"]),
-    cjRank: idx(["c&j順位", "cj順位", "クリーン順位"]),
-    totalWeight: idx(["トータル", "合計", "total", "総合"]),
-    totalRank: idx(["トータル順位", "総合順位", "順位"]),
-  };
+/** 1行から階級を検出し、マッチした階級文字列を返す（複数あれば最後） */
+function extractCategoryFromLine(line: string): string | null {
+  const m = line.match(CATEGORY_REGEX);
+  return m && m.length > 0 ? m[m.length - 1] : null;
 }
 
-/** 1行のセル配列から ParsedResultRow を組み立て（インデックス指定あり） */
-function rowToResult(
-  cells: string[],
-  col: ReturnType<typeof detectColumnIndices>
+/** 行が「選手データ行」かどうか（体重 or 生年を含む） */
+function isAthleteAnchorLine(line: string): boolean {
+  if (BODY_WEIGHT_REGEX.test(line)) return true;
+  if (BIRTH_YEAR_REGEX.test(line)) return true;
+  return false;
+}
+
+/** ヘッダー行らしきか（県名・所属名・順位などの典型的ヘッダー語） */
+function looksLikeHeader(line: string): boolean {
+  const t = line.replace(/\s/g, "");
+  return (
+    /県名|所属名|氏名|選手名|順位|スナッチ|クリーン|ジャーク|トータル|合計|体重|学年|年齢|区分|部門/.test(t) &&
+    !BODY_WEIGHT_REGEX.test(line) &&
+    !BIRTH_YEAR_REGEX.test(line)
+  );
+}
+
+/** 生年の前の部分から選手名らしき文字列を抽出（最後の連続した日本語ブロックを採用） */
+function extractNameBeforeBirthYear(line: string): string {
+  const yearMatch = line.match(BIRTH_YEAR_REGEX);
+  if (!yearMatch) return "";
+  const yearIndex = line.indexOf(yearMatch[0]);
+  const before = line.slice(0, yearIndex).trim();
+  const tokens = splitRow(before);
+  const nameParts: string[] = [];
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i];
+    if (/^[\d.]+$/.test(t)) break;
+    if (/^[①②③④⑤⑥⑦⑧⑨⑩]+$/.test(t)) break;
+    if (t.length > 20) break;
+    nameParts.unshift(t);
+  }
+  return nameParts.join(" ").trim() || before.replace(/\s{2,}/g, " ").trim();
+}
+
+/** 生年付近の1桁数字を学年として取得 */
+function extractGradeNearBirthYear(line: string): string | null {
+  const yearMatch = line.match(BIRTH_YEAR_REGEX);
+  if (!yearMatch) return null;
+  const idx = line.indexOf(yearMatch[0]);
+  const around = line.slice(Math.max(0, idx - 4), idx + yearMatch[0].length + 4);
+  const oneDigit = around.match(/\b([1-6])\b/);
+  return oneDigit ? oneDigit[1] : null;
+}
+
+/** 行から体重後の数値列を抽出（スナッチ・C&J・トータルのベスト/順位の候補） */
+function extractNumberSequenceAfterWeight(line: string): number[] {
+  const nums: number[] = [];
+  const tokens = line.split(/\s+/);
+  let foundWeight = false;
+  for (const t of tokens) {
+    const cleaned = t.replace(/,/g, "").trim();
+    if (BODY_WEIGHT_REGEX.test(cleaned)) {
+      foundWeight = true;
+      continue;
+    }
+    if (!foundWeight) continue;
+    if (/^[\d.]+$/.test(cleaned)) {
+      const n = Number(cleaned);
+      if (Number.isFinite(n) && n >= 0 && n <= 500) nums.push(n);
+    }
+  }
+  if (nums.length > 0) return nums;
+  const globalNum = line.match(/\d{2,3}(?:\.\d{2})?/g);
+  if (!globalNum) return [];
+  return globalNum
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n) && n >= 0 && n <= 500);
+}
+
+/**
+ * 数値列からスナッチベスト/順位、C&Jベスト/順位、トータルベスト/順位を推測する。
+ * 典型的な並び: [スナッチベスト, スナッチ順位, C&Jベスト, C&J順位, トータル, トータル順位] (6個)
+ * または (重量, 順位) のペアが続くパターン。
+ */
+function mapNumbersToResult(
+  nums: number[]
+): Pick<
+  ParsedResultRow,
+  "snatch_best" | "snatch_rank" | "cj_best" | "cj_rank" | "total_weight" | "total_rank"
+> {
+  const out = {
+    snatch_best: null as number | null,
+    snatch_rank: null as number | null,
+    cj_best: null as number | null,
+    cj_rank: null as number | null,
+    total_weight: null as number | null,
+    total_rank: null as number | null,
+  };
+  if (nums.length < 2) return out;
+
+  const noDecimals = nums.filter((n) => n <= 300 && n === Math.floor(n));
+  if (noDecimals.length >= 6) {
+    out.snatch_best = noDecimals[0];
+    out.snatch_rank = noDecimals[1];
+    out.cj_best = noDecimals[2];
+    out.cj_rank = noDecimals[3];
+    out.total_weight = noDecimals[4];
+    out.total_rank = noDecimals[5];
+    return out;
+  }
+
+  for (let i = 0; i < nums.length - 1; i += 2) {
+    const a = nums[i];
+    const b = nums[i + 1];
+    if (a >= 20 && a <= 300 && b >= 1 && b <= 50) {
+      if (out.snatch_best == null) {
+        out.snatch_best = a;
+        out.snatch_rank = b;
+      } else if (out.cj_best == null) {
+        out.cj_best = a;
+        out.cj_rank = b;
+      } else if (out.total_weight == null) {
+        out.total_weight = a;
+        out.total_rank = b;
+      }
+    }
+  }
+
+  const withDecimals = nums.filter((n) => n > 0);
+  if (withDecimals.length >= 3 && out.snatch_best == null && out.cj_best == null) {
+    const sorted = [...withDecimals].sort((a, b) => b - a);
+    if (sorted[0] >= 50) {
+      out.total_weight = sorted[0];
+      out.cj_best = sorted[1];
+      out.snatch_best = sorted[2];
+    }
+  }
+  return out;
+}
+
+/**
+ * 1行をパースして選手1件分の ParsedResultRow を返す。
+ * 階級は呼び出し側で渡す。名前・学年・数値は行から抽出。
+ */
+function parseAthleteLine(
+  line: string,
+  currentCategory: string | null
 ): ParsedResultRow | null {
-  const at = (i: number | null) => (i != null && cells[i] !== undefined ? cells[i] : "");
-  const name = at(col.name).trim() || at(0).trim();
-  if (!name || /^\d+$/.test(name)) return null; // 名前が空または数字のみはスキップ
+  if (looksLikeHeader(line)) return null;
 
-  const pickNum = (i: number | null) => parseNum(at(i));
+  const name = extractNameBeforeBirthYear(line);
+  if (!name || name.length < 2) return null;
+  if (/^\d+$/.test(name) || /^[.\d\s]+$/.test(name)) return null;
+
+  const grade = extractGradeNearBirthYear(line);
+  const nums = extractNumberSequenceAfterWeight(line);
+  const record = mapNumbersToResult(nums);
+
   return {
     athlete_name: name,
-    category: at(col.category) || null,
-    age_grade: at(col.ageGrade) || null,
-    snatch_best: pickNum(col.snatchBest),
-    snatch_rank: pickNum(col.snatchRank),
-    cj_best: pickNum(col.cjBest),
-    cj_rank: pickNum(col.cjRank),
-    total_weight: pickNum(col.totalWeight),
-    total_rank: pickNum(col.totalRank),
-  };
-}
-
-/** ヘッダーなしで、左から順に「名前・任意・任意・スナッチ・スナッチ順・C&J・C&J順・トータル・トータル順」と仮定してパース */
-function parseRowHeuristic(cells: string[]): ParsedResultRow | null {
-  if (cells.length < 2) return null;
-  const name = cells[0].trim();
-  if (!name || /^\d+$/.test(name)) return null;
-  return {
-    athlete_name: name,
-    category: cells[1]?.trim() || null,
-    age_grade: cells[2]?.trim() || null,
-    snatch_best: parseNum(cells[3] ?? ""),
-    snatch_rank: parseNum(cells[4] ?? ""),
-    cj_best: parseNum(cells[5] ?? ""),
-    cj_rank: parseNum(cells[6] ?? ""),
-    total_weight: parseNum(cells[7] ?? ""),
-    total_rank: parseNum(cells[8] ?? ""),
+    category: currentCategory,
+    age_grade: grade,
+    snatch_best: record.snatch_best,
+    snatch_rank: record.snatch_rank,
+    cj_best: record.cj_best,
+    cj_rank: record.cj_rank,
+    total_weight: record.total_weight,
+    total_rank: record.total_rank,
   };
 }
 
 /**
  * PDFから抽出したテキストをパースし、競技結果行の配列を返す。
- * 表形式（空白区切り・タブ区切り）を想定した堅牢なロジック。
+ * ウエイトリフティング結果PDF特化：階級の追跡・体重/生年をアンカーにした選手行の検出。
  */
 export function parseResultsFromText(text: string): ParsedResultRow[] {
   const lines = text
@@ -102,33 +198,20 @@ export function parseResultsFromText(text: string): ParsedResultRow[] {
   if (lines.length === 0) return [];
 
   const rows: ParsedResultRow[] = [];
-  let columnMap: ReturnType<typeof detectColumnIndices> | null = null;
-  let dataStartIndex = 0;
+  let currentCategory: string | null = null;
 
-  // ヘッダー行を探す（選手名・スナッチ・C&J・トータルなどのキーワードを含む行）
-  for (let i = 0; i < Math.min(lines.length, 15); i++) {
-    const cells = splitRow(lines[i]);
-    if (cells.length < 2) continue;
-    const headerCandidates = cells.join(" ");
-    if (
-      /選手名|氏名|スナッチ|C&J|トータル|階級|学年|順位/.test(headerCandidates)
-    ) {
-      columnMap = detectColumnIndices(cells);
-      dataStartIndex = i + 1;
-      break;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const categoryFromLine = extractCategoryFromLine(line);
+    if (categoryFromLine) {
+      currentCategory = categoryFromLine;
     }
-  }
 
-  for (let i = dataStartIndex; i < lines.length; i++) {
-    const cells = splitRow(lines[i]);
-    if (cells.length < 1) continue;
+    if (!isAthleteAnchorLine(line)) continue;
+    if (looksLikeHeader(line)) continue;
 
-    let row: ParsedResultRow | null;
-    if (columnMap) {
-      row = rowToResult(cells, columnMap);
-    } else {
-      row = parseRowHeuristic(cells);
-    }
+    const row = parseAthleteLine(line, currentCategory);
     if (row) rows.push(row);
   }
 
