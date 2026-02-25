@@ -52,7 +52,11 @@ export type WlResultWithCompetition = WlResult & {
   wlre_competitions?: Pick<WlCompetition, "id" | "competition_year" | "name"> | null;
 };
 
-/** Supabase createClient<Database> 用の public スキーマ型 */
+/**
+ * Supabase createClient<Database> 用の型。
+ * GenericSchema に合わせて Tables / Views / Functions を定義する。
+ * （Views / Functions は未使用のため空オブジェクト）
+ */
 export interface WlDatabase {
   public: {
     Tables: {
@@ -60,12 +64,23 @@ export interface WlDatabase {
         Row: WlCompetition;
         Insert: WlCompetitionInsert;
         Update: Partial<WlCompetitionInsert>;
+        Relationships: [];
       };
       wlre_results: {
         Row: WlResult;
         Insert: WlResultInsert;
         Update: Partial<WlResultInsert>;
+        Relationships: [
+          {
+            foreignKeyName: "wlre_results_competition_id_fkey";
+            columns: ["competition_id"];
+            referencedRelation: "wlre_competitions";
+            referencedColumns: ["id"];
+          },
+        ];
       };
     };
+    Views: {};
+    Functions: {};
   };
 }

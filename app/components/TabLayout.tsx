@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { FileUp, Search } from "lucide-react";
 import { RegisterTab } from "./RegisterTab";
+import { SearchTab } from "./SearchTab";
 
 type TabId = "register" | "search";
 
@@ -43,16 +44,7 @@ export function TabLayout() {
       <main className="flex-1 bg-white dark:bg-zinc-950">
         <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
           {activeTab === "register" && <RegisterTab />}
-          {activeTab === "search" && (
-            <section className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-6 dark:border-zinc-800 dark:bg-zinc-900/30">
-              <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                データ検索・一覧
-              </h2>
-              <p className="text-zinc-600 dark:text-zinc-400">
-                大会・選手・階級などで検索し、結果一覧を表示する画面です。（Step 2 で実装予定）
-              </p>
-            </section>
-          )}
+          {activeTab === "search" && <SearchTab />}
         </div>
       </main>
     </div>
