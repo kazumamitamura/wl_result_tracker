@@ -14,7 +14,9 @@ import {
   Loader2,
   Search,
   AlertCircle,
+  FileSpreadsheet,
 } from "lucide-react";
+import { exportToExcel } from "@/lib/export-excel";
 
 type SortKey =
   | "athlete_name"
@@ -124,6 +126,7 @@ export function SearchTab() {
 
   const [sortKey, setSortKey] = useState<SortKey>("total_weight");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [exporting, setExporting] = useState(false);
 
   const loadOptions = useCallback(async () => {
     setOptionsLoading(true);
@@ -293,6 +296,28 @@ export function SearchTab() {
             )}
             {searchLoading ? "検索中…" : "検索"}
           </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (sortedResults.length === 0) return;
+              setExporting(true);
+              try {
+                await exportToExcel(sortedResults);
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={sortedResults.length === 0 || exporting}
+            className="inline-flex items-center gap-2 rounded-md border-2 border-green-600 bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:border-zinc-300 disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:border-zinc-600 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+            title={sortedResults.length === 0 ? "検索結果を表示後に出力できます" : "表示中の検索結果をExcelでダウンロード"}
+          >
+            {exporting ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <FileSpreadsheet className="size-4" aria-hidden />
+            )}
+            {exporting ? "出力中…" : "Excelで出力"}
+          </button>
         </div>
       </div>
 
@@ -315,10 +340,32 @@ export function SearchTab() {
         )}
         {!searchLoading && !searchError && results.length > 0 && (
           <>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {sortedResults.length} 件
-              {searchLoading && "（再検索中…）"}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {sortedResults.length} 件
+                {searchLoading && "（再検索中…）"}
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await exportToExcel(sortedResults);
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+                disabled={exporting}
+                className="inline-flex items-center gap-2 rounded-md border-2 border-green-600 bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-70 dark:border-green-500 dark:bg-green-600 dark:hover:bg-green-700"
+              >
+                {exporting ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <FileSpreadsheet className="size-4" aria-hidden />
+                )}
+                {exporting ? "出力中…" : "Excelで出力"}
+              </button>
+            </div>
             <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
               <table className="min-w-[900px] border-collapse text-sm">
                 <thead>
