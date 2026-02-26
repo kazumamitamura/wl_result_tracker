@@ -42,11 +42,28 @@ function sanitizeParsedRows(rows: ParsedResultRow[]): ParsedResultRow[] {
 }
 
 /**
+ * pdfjs-dist が Node.js 環境で要求するブラウザ専用 API のポリフィルを注入する。
+ * DOMMatrix, Path2D 等が未定義だと ReferenceError で落ちるため、
+ * 動的 import より前に必ず呼ぶ。
+ */
+function ensureBrowserPolyfills() {
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    (globalThis as Record<string, unknown>).DOMMatrix = class DOMMatrix {
+      constructor() { return Object.create(DOMMatrix.prototype); }
+    };
+  }
+  if (typeof globalThis.Path2D === "undefined") {
+    (globalThis as Record<string, unknown>).Path2D = class Path2D {};
+  }
+}
+
+/**
  * pdfjs-dist を直接使ってテキストを抽出する。
- * @napi-rs/canvas は optionalDependencies なので無くても動作する。
- * pdf-parse v2 のラッパーを避けることで Vercel 環境での native module クラッシュを回避。
+ * ポリフィル適用済みの状態で動的 import し、canvas を一切使わずテキストのみ取得する。
  */
 async function extractTextWithPdfjs(data: Uint8Array): Promise<string> {
+  ensureBrowserPolyfills();
+
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc = await pdfjsLib.getDocument({
     data,
@@ -75,9 +92,12 @@ async function extractTextWithPdfjs(data: Uint8Array): Promise<string> {
 
 /**
  * pdf-parse v2（PDFParse クラス）でテキスト抽出を試みる。
+ * 内部で pdfjs-dist を使うため、事前にポリフィルを適用する。
  * ネイティブモジュールが無い環境では動的 import が失敗するため、呼び出し側でフォールバックする。
  */
 async function extractTextWithPdfParse(data: Uint8Array): Promise<string> {
+  ensureBrowserPolyfills();
+
   const mod = await import("pdf-parse");
   const parser = new mod.PDFParse({ data });
   const result = await parser.getText();
