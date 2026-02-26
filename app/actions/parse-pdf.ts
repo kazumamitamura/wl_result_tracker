@@ -8,16 +8,22 @@ const SMART_HEADERS = [
   "生年", "体重", "Sベスト", "S順位", "CJベスト", "CJ順位",
   "トータル", "T順位",
 ];
+const SMART_COL_COUNT = SMART_HEADERS.length;
 
 export type ParsePdfResult =
   | { success: true; grid: string[][]; headers: string[] }
   | { success: false; error: string };
+
+/* ------------------------------------------------------------------ */
+/*  Regex / constants                                                 */
+/* ------------------------------------------------------------------ */
 
 const CATEGORY_RE =
   /^(45|49|55|59|61|64|67|71|73|76|81|89|96|102|109|\+87|\+109)\s*[Kk]g$/i;
 const CATEGORY_NUM_RE =
   /^(45|49|55|59|61|64|67|71|73|76|81|89|96|102|109|\+87|\+109)$/;
 const BIRTH_YEAR_RE = /^(19|20)\d{2}$/;
+const BODY_WEIGHT_RE = /^\d{2,3}\.\d{2}$/;
 const RECORD_NUM_RE = /^\d{1,3}$/;
 
 const PREFECTURES = [
@@ -35,12 +41,10 @@ function hasCJK(s: string): boolean {
   return /[\u3000-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u.test(s);
 }
 
-/**
- * infoString（No.～学年の結合文字列）から各フィールドを分離する。
- *
- *   例: "7 天久 星七沖 縄 本部高校 1"
- *   → { no: "7", name: "天久 星七", prefecture: "沖縄", affiliation: "本部高校", grade: "1" }
- */
+/* ------------------------------------------------------------------ */
+/*  infoString → structured fields                                    */
+/* ------------------------------------------------------------------ */
+
 function extractInfoFields(raw: string): {
   no: string;
   name: string;
@@ -90,78 +94,272 @@ function extractInfoFields(raw: string): {
   return { no, name, prefecture, affiliation, grade };
 }
 
-function parseAthleteTokens(text: string): string[][] {
+/* ------------------------------------------------------------------ */
+/*  Shared helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+function padRow(cells: string[]): string[] {
+  const row = [...cells];
+  while (row.length < SMART_COL_COUNT) row.push("");
+  return row;
+}
+
+function findInfoStart(
+  tokens: string[],
+  from: number,
+  to: number
+): number {
+  for (let j = from; j < to; j++) {
+    if (hasCJK(tokens[j])) {
+      if (j > from && /^\d{1,3}$/.test(tokens[j - 1])) return j - 1;
+      return j;
+    }
+  }
+  return to;
+}
+
+function extractRecordNumbers(
+  tokens: string[],
+  start: number,
+  count: number
+): string[] {
+  const lookahead = tokens.slice(start, Math.min(start + count, tokens.length));
+  return lookahead.filter((t) => RECORD_NUM_RE.test(t));
+}
+
+/* ------------------------------------------------------------------ */
+/*  Strategy 1: Body-weight anchor (\d{2,3}\.\d{2})                   */
+/* ------------------------------------------------------------------ */
+
+function extractByBodyWeight(tokens: string[]): string[][] {
+  const rows: string[][] = [];
+  let currentCategory = "";
+  let scanStart = 0;
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (CATEGORY_RE.test(tokens[i])) {
+      currentCategory = tokens[i];
+      scanStart = i + 1;
+      continue;
+    }
+    if (
+      CATEGORY_NUM_RE.test(tokens[i]) &&
+      i + 1 < tokens.length &&
+      /^[Kk]g$/i.test(tokens[i + 1])
+    ) {
+      currentCategory = tokens[i] + tokens[i + 1];
+      scanStart = i + 2;
+      i++;
+      continue;
+    }
+
+    if (!BODY_WEIGHT_RE.test(tokens[i])) continue;
+
+    const bodyWeight = tokens[i];
+    const infoStart = findInfoStart(tokens, scanStart, i);
+    const rawInfo = [...tokens.slice(infoStart, i)];
+
+    let birthYear = "";
+    if (
+      rawInfo.length > 0 &&
+      BIRTH_YEAR_RE.test(rawInfo[rawInfo.length - 1])
+    ) {
+      birthYear = rawInfo.pop()!;
+    }
+
+    const infoString = rawInfo.join(" ");
+    const { no, name, prefecture, affiliation, grade } =
+      extractInfoFields(infoString);
+
+    const numbers = extractRecordNumbers(tokens, i + 1, 30);
+
+    rows.push(
+      padRow([
+        currentCategory, no, name, prefecture, affiliation, grade,
+        birthYear, bodyWeight,
+        numbers[6] ?? "", numbers[7] ?? "",
+        numbers[8] ?? "", numbers[9] ?? "",
+        numbers[10] ?? "", numbers[11] ?? "",
+      ])
+    );
+
+    scanStart = i + 1;
+  }
+  return rows;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Strategy 2: Birth-year anchor ((19|20)\d{2})                      */
+/* ------------------------------------------------------------------ */
+
+function extractByBirthYear(tokens: string[]): string[][] {
+  const rows: string[][] = [];
+  let currentCategory = "";
+  let scanStart = 0;
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (CATEGORY_RE.test(tokens[i])) {
+      currentCategory = tokens[i];
+      scanStart = i + 1;
+      continue;
+    }
+    if (
+      CATEGORY_NUM_RE.test(tokens[i]) &&
+      i + 1 < tokens.length &&
+      /^[Kk]g$/i.test(tokens[i + 1])
+    ) {
+      currentCategory = tokens[i] + tokens[i + 1];
+      scanStart = i + 2;
+      i++;
+      continue;
+    }
+
+    if (!BIRTH_YEAR_RE.test(tokens[i])) continue;
+
+    const birthYear = tokens[i];
+    const infoStart = findInfoStart(tokens, scanStart, i);
+    const infoString = tokens.slice(infoStart, i).join(" ");
+    const { no, name, prefecture, affiliation, grade } =
+      extractInfoFields(infoString);
+
+    const bodyWeight =
+      i + 1 < tokens.length && BODY_WEIGHT_RE.test(tokens[i + 1])
+        ? tokens[i + 1]
+        : "";
+    const recordStart = bodyWeight ? i + 2 : i + 1;
+    const numbers = extractRecordNumbers(tokens, recordStart, 30);
+
+    rows.push(
+      padRow([
+        currentCategory, no, name, prefecture, affiliation, grade,
+        birthYear, bodyWeight,
+        numbers[6] ?? "", numbers[7] ?? "",
+        numbers[8] ?? "", numbers[9] ?? "",
+        numbers[10] ?? "", numbers[11] ?? "",
+      ])
+    );
+
+    scanStart = recordStart;
+  }
+  return rows;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Strategy 3: Prefecture anchor (47 prefectures)                    */
+/* ------------------------------------------------------------------ */
+
+function extractByPrefecture(tokens: string[]): string[][] {
+  const rows: string[][] = [];
+  let currentCategory = "";
+  let scanStart = 0;
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (CATEGORY_RE.test(tokens[i])) {
+      currentCategory = tokens[i];
+      scanStart = i + 1;
+      continue;
+    }
+    if (
+      CATEGORY_NUM_RE.test(tokens[i]) &&
+      i + 1 < tokens.length &&
+      /^[Kk]g$/i.test(tokens[i + 1])
+    ) {
+      currentCategory = tokens[i] + tokens[i + 1];
+      scanStart = i + 2;
+      i++;
+      continue;
+    }
+
+    if (!PREF_DIRECT_RE.test(tokens[i])) continue;
+
+    const prefecture = tokens[i];
+    const infoStart = findInfoStart(tokens, scanStart, i);
+
+    let no = "";
+    let name = "";
+    const before = tokens.slice(infoStart, i);
+    if (before.length > 0 && /^\d{1,3}$/.test(before[0])) {
+      no = before.shift()!;
+    }
+    name = before.join(" ");
+
+    let affiliation = "";
+    let grade = "";
+    let birthYear = "";
+    let bodyWeight = "";
+    const after: string[] = [];
+
+    for (let j = i + 1; j < Math.min(i + 10, tokens.length); j++) {
+      const t = tokens[j];
+      if (!bodyWeight && BODY_WEIGHT_RE.test(t)) {
+        bodyWeight = t;
+        const nums = extractRecordNumbers(tokens, j + 1, 30);
+        rows.push(
+          padRow([
+            currentCategory, no, name, prefecture, affiliation, grade,
+            birthYear, bodyWeight,
+            nums[6] ?? "", nums[7] ?? "",
+            nums[8] ?? "", nums[9] ?? "",
+            nums[10] ?? "", nums[11] ?? "",
+          ])
+        );
+        scanStart = j + 1;
+        break;
+      }
+      if (!birthYear && BIRTH_YEAR_RE.test(t)) {
+        birthYear = t;
+        continue;
+      }
+      if (!grade && /^\d$/.test(t)) {
+        grade = t;
+        continue;
+      }
+      if (hasCJK(t)) {
+        after.push(t);
+        continue;
+      }
+    }
+    affiliation = after.join(" ");
+
+    if (!bodyWeight) {
+      rows.push(
+        padRow([
+          currentCategory, no, name, prefecture, affiliation, grade,
+          birthYear, bodyWeight,
+        ])
+      );
+      scanStart = i + 1;
+    }
+  }
+  return rows;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Orchestrator                                                      */
+/* ------------------------------------------------------------------ */
+
+function parseSmartRows(text: string): string[][] {
   try {
     const tokens = text.split(/\s+/).filter((t) => t.length > 0);
-    const rows: string[][] = [];
-    let currentCategory = "";
-    let scanStart = 0;
 
-    for (let i = 0; i < tokens.length; i++) {
-      if (CATEGORY_RE.test(tokens[i])) {
-        currentCategory = tokens[i];
-        scanStart = i + 1;
-        continue;
-      }
-      if (
-        CATEGORY_NUM_RE.test(tokens[i]) &&
-        i + 1 < tokens.length &&
-        /^[Kk]g$/i.test(tokens[i + 1])
-      ) {
-        currentCategory = tokens[i] + tokens[i + 1];
-        scanStart = i + 2;
-        i++;
-        continue;
-      }
+    const bw = extractByBodyWeight(tokens);
+    if (bw.length > 0) return bw;
 
-      if (!BIRTH_YEAR_RE.test(tokens[i])) continue;
+    const by = extractByBirthYear(tokens);
+    if (by.length > 0) return by;
 
-      let infoStart = i;
-      for (let j = scanStart; j < i; j++) {
-        if (hasCJK(tokens[j])) {
-          if (j > scanStart && /^\d{1,3}$/.test(tokens[j - 1])) {
-            infoStart = j - 1;
-          } else {
-            infoStart = j;
-          }
-          break;
-        }
-      }
+    const pref = extractByPrefecture(tokens);
+    if (pref.length > 0) return pref;
 
-      const infoString = tokens.slice(infoStart, i).join(" ");
-      const { no, name, prefecture, affiliation, grade } =
-        extractInfoFields(infoString);
-
-      const birthYear = tokens[i];
-      const bodyWeight = i + 1 < tokens.length ? tokens[i + 1] : "";
-
-      const lookahead = tokens.slice(i + 2, Math.min(i + 32, tokens.length));
-      const numbers = lookahead.filter((t) => RECORD_NUM_RE.test(t));
-
-      rows.push([
-        currentCategory,
-        no,
-        name,
-        prefecture,
-        affiliation,
-        grade,
-        birthYear,
-        bodyWeight,
-        numbers[6] ?? "",
-        numbers[7] ?? "",
-        numbers[8] ?? "",
-        numbers[9] ?? "",
-        numbers[10] ?? "",
-        numbers[11] ?? "",
-      ]);
-
-      scanStart = i + 2;
-    }
-    return rows;
+    return [];
   } catch {
     return [];
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Server Action                                                     */
+/* ------------------------------------------------------------------ */
 
 export async function parsePdf(formData: FormData): Promise<ParsePdfResult> {
   try {
@@ -206,9 +404,9 @@ export async function parsePdf(formData: FormData): Promise<ParsePdfResult> {
       };
     }
 
-    const athleteRows = parseAthleteTokens(text);
-    if (athleteRows.length > 0) {
-      return { success: true, grid: athleteRows, headers: SMART_HEADERS };
+    const smartRows = parseSmartRows(text);
+    if (smartRows.length > 0) {
+      return { success: true, grid: smartRows, headers: SMART_HEADERS };
     }
 
     const lines = text.split(/\n/).filter((l) => l.trim().length > 0);

@@ -11,6 +11,7 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  Plus,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -205,6 +206,14 @@ export function RegisterTab() {
     setGrid((prev) => (prev ? prev.map((row) => swap(row)) : prev));
     setHeaders(swap);
     setMappings(swap);
+  }, []);
+
+  const addRow = useCallback(() => {
+    setGrid((prev) => {
+      if (!prev) return prev;
+      const cols = prev[0]?.length ?? 0;
+      return [...prev, Array<string>(cols).fill("")];
+    });
   }, []);
 
   const updateMapping = useCallback(
@@ -448,6 +457,16 @@ export function RegisterTab() {
               </tbody>
             </table>
           </div>
+
+          {/* Add row button */}
+          <button
+            type="button"
+            onClick={addRow}
+            className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:bg-zinc-800"
+          >
+            <Plus className="size-3.5" />
+            行を追加
+          </button>
 
           {/* Year, competition name, save */}
           <div className="flex flex-wrap items-end gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
