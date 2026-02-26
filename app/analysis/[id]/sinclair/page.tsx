@@ -136,13 +136,24 @@ export default function SinclairMvpPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, index) => (
+                  {rows.map((row, index) => {
+                    const rank = index + 1;
+                    const medal =
+                      rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : null;
+                    return (
                     <tr
                       key={row.id}
                       className="border-b border-zinc-100 dark:border-zinc-700/70"
                     >
                       <td className="px-4 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                        {index + 1}
+                        {medal != null ? (
+                          <span className="inline-flex items-center gap-1" title={`${rank}位`}>
+                            <span aria-hidden>{medal}</span>
+                            <span>{rank}</span>
+                          </span>
+                        ) : (
+                          rank
+                        )}
                       </td>
                       <td className="px-4 py-2 text-zinc-900 dark:text-zinc-100">
                         {row.athlete_name}
@@ -160,7 +171,8 @@ export default function SinclairMvpPage() {
                         {row.sinclair.toFixed(3)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

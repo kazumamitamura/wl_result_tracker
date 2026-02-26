@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getCompetitionsList } from "@/app/actions/search";
 import { deleteCompetition } from "@/app/actions/delete-competition";
 import type { CompetitionListItem } from "@/app/actions/search";
-import { Loader2, Trash2, BarChart3 } from "lucide-react";
+import { Loader2, Trash2, BarChart3, Trophy } from "lucide-react";
 import Link from "next/link";
 
 export function CompetitionListSection() {
@@ -109,6 +109,14 @@ export function CompetitionListSection() {
                 >
                   <BarChart3 className="size-3.5" />
                   分析
+                </Link>
+                <Link
+                  href={`/analysis/${item.id}/sinclair`}
+                  className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 dark:border-amber-600 dark:bg-amber-900/50 dark:text-amber-100 dark:hover:bg-amber-800/50"
+                  aria-label={`「${item.name}」のシンクレアランキングを表示`}
+                >
+                  <Trophy className="size-3.5" />
+                  シンクレア
                 </Link>
                 <button
                 type="button"
