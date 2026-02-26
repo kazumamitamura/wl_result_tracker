@@ -17,7 +17,7 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { getCompetitionAnalysis } from "@/app/actions/get-competition-analysis";
 import type { CompetitionAnalysisRow } from "@/app/actions/get-competition-analysis";
-import { ArrowLeft, Download, Loader2 } from "lucide-react";
+import { ArrowLeft, Download, Loader2, Trophy } from "lucide-react";
 
 export default function AnalysisPage() {
   const params = useParams();
@@ -143,6 +143,15 @@ export default function AnalysisPage() {
             )}
             PDFでダウンロード
           </button>
+          {id && (
+            <Link
+              href={`/analysis/${id}/sinclair`}
+              className="inline-flex items-center gap-2 rounded-md border border-amber-600 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-500 dark:bg-zinc-900 dark:text-amber-400 dark:hover:bg-amber-950/30"
+            >
+              <Trophy className="size-4" aria-hidden />
+              MVPランキング（シンクレア）
+            </Link>
+          )}
         </div>
 
         {data.length === 0 ? (
