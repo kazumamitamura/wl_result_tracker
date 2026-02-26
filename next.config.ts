@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     },
   },
   // pdf-parse とその依存関係を Next.js のバンドルから除外し、Node.js ネイティブとして扱う
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
 };
 
 export default nextConfig;
