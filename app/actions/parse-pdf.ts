@@ -26,6 +26,11 @@ const BIRTH_YEAR_RE = /^(19|20)\d{2}$/;
 const BODY_WEIGHT_RE = /^\d{2,3}\.\d{2}$/;
 const RECORD_NUM_RE = /^\d{1,3}$/;
 
+/** ページヘッダー: 女子セクション開始 (例: W55, 女子55) */
+const WOMEN_HEADER_RE = /^(W|女(子)?)\d{2,3}$/i;
+/** ページヘッダー: 男子セクション開始 (例: M55, 男子55) */
+const MEN_HEADER_RE = /^(M|男(子)?)\d{2,3}$/i;
+
 const PREFECTURES = [
   "北海道", "青森", "岩手", "宮城", "秋田", "山形", "福島",
   "茨城", "栃木", "群馬", "埼玉", "千葉", "東京", "神奈川",
@@ -36,6 +41,11 @@ const PREFECTURES = [
   "熊本", "大分", "宮崎", "鹿児島", "沖縄",
 ];
 const PREF_DIRECT_RE = new RegExp(`(${PREFECTURES.join("|")})`);
+
+/** 生年前の infoString を No. / 氏名 / 都道府県 / 所属 / 学年 に一発分割 */
+const INFO_REGEX = new RegExp(
+  `^\\s*(\\d+)\\s*(.+?)\\s*(${PREFECTURES.join("|")})\\s*(.+?)\\s*(\\d)\\s*$`
+);
 
 function hasCJK(s: string): boolean {
   return /[\u3000-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u.test(s);
@@ -52,7 +62,21 @@ function extractInfoFields(raw: string): {
   affiliation: string;
   grade: string;
 } {
-  let rest = raw.trim();
+  const infoString = raw.trim();
+  const match = infoString.match(INFO_REGEX);
+
+  if (match) {
+    return {
+      no: match[1],
+      name: match[2].trim(),
+      prefecture: match[3],
+      affiliation: match[4].trim(),
+      grade: match[5],
+    };
+  }
+
+  /* 正規表現にマッチしなかった場合のフォールバック */
+  let rest = infoString;
 
   let no = "";
   const noMatch = rest.match(/^(\d+)\s*/);
@@ -135,10 +159,21 @@ function extractByBodyWeight(tokens: string[]): string[][] {
   const rows: string[][] = [];
   let currentCategory = "";
   let scanStart = 0;
+  let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
+    if (WOMEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = true;
+      continue;
+    }
+    if (MEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = false;
+      continue;
+    }
+
     if (CATEGORY_RE.test(tokens[i])) {
       currentCategory = tokens[i];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 1;
       continue;
     }
@@ -148,6 +183,7 @@ function extractByBodyWeight(tokens: string[]): string[][] {
       /^[Kk]g$/i.test(tokens[i + 1])
     ) {
       currentCategory = tokens[i] + tokens[i + 1];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 2;
       i++;
       continue;
@@ -196,10 +232,21 @@ function extractByBirthYear(tokens: string[]): string[][] {
   const rows: string[][] = [];
   let currentCategory = "";
   let scanStart = 0;
+  let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
+    if (WOMEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = true;
+      continue;
+    }
+    if (MEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = false;
+      continue;
+    }
+
     if (CATEGORY_RE.test(tokens[i])) {
       currentCategory = tokens[i];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 1;
       continue;
     }
@@ -209,6 +256,7 @@ function extractByBirthYear(tokens: string[]): string[][] {
       /^[Kk]g$/i.test(tokens[i + 1])
     ) {
       currentCategory = tokens[i] + tokens[i + 1];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 2;
       i++;
       continue;
@@ -252,10 +300,21 @@ function extractByPrefecture(tokens: string[]): string[][] {
   const rows: string[][] = [];
   let currentCategory = "";
   let scanStart = 0;
+  let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
+    if (WOMEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = true;
+      continue;
+    }
+    if (MEN_HEADER_RE.test(tokens[i])) {
+      isWomenSection = false;
+      continue;
+    }
+
     if (CATEGORY_RE.test(tokens[i])) {
       currentCategory = tokens[i];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 1;
       continue;
     }
@@ -265,6 +324,7 @@ function extractByPrefecture(tokens: string[]): string[][] {
       /^[Kk]g$/i.test(tokens[i + 1])
     ) {
       currentCategory = tokens[i] + tokens[i + 1];
+      if (isWomenSection) currentCategory = "W" + currentCategory;
       scanStart = i + 2;
       i++;
       continue;
