@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { getCompetitionsList } from "@/app/actions/search";
 import { deleteCompetition } from "@/app/actions/delete-competition";
 import type { CompetitionListItem } from "@/app/actions/search";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, BarChart3 } from "lucide-react";
+import Link from "next/link";
 
 export function CompetitionListSection() {
   const [list, setList] = useState<CompetitionListItem[]>([]);
@@ -100,7 +101,16 @@ export function CompetitionListSection() {
                   （{item.competition_year}年）
                 </span>
               </span>
-              <button
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/analysis/${item.id}`}
+                  className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50"
+                  aria-label={`「${item.name}」の分析を表示`}
+                >
+                  <BarChart3 className="size-3.5" />
+                  分析
+                </Link>
+                <button
                 type="button"
                 onClick={() => handleDelete(item)}
                 disabled={deletingId !== null}
@@ -114,6 +124,7 @@ export function CompetitionListSection() {
                 )}
                 削除
               </button>
+              </div>
             </li>
           ))}
         </ul>
