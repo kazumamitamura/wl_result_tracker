@@ -1,23 +1,48 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import { parsePdf } from "@/app/actions/parse-pdf";
 import { saveCompetitionAndResults } from "@/app/actions/save-competition";
 import type { ParsedResultRow } from "@/types/database";
-import { FileUp, Loader2, Save } from "lucide-react";
+import {
+  FileUp,
+  Loader2,
+  Save,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
-function cellValue(
-  v: string | number | null | undefined | unknown
-): string {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "object" || Array.isArray(v)) return String(v);
-  return String(v);
-}
+const COLUMN_MAPPINGS = [
+  { value: "ignore", label: "無視する" },
+  { value: "athlete_name", label: "選手名" },
+  { value: "category", label: "カテゴリ(階級)" },
+  { value: "age_grade", label: "学年/年齢" },
+  { value: "snatch_best", label: "スナッチベスト" },
+  { value: "snatch_rank", label: "スナッチ順位" },
+  { value: "cj_best", label: "C&Jベスト" },
+  { value: "cj_rank", label: "C&J順位" },
+  { value: "total_weight", label: "トータル重量" },
+  { value: "total_rank", label: "トータル順位" },
+] as const;
 
-/** パース済み1行を表示用に正規化（オブジェクト/配列を文字列化） */
-function safeRow(row: ParsedResultRow | null | undefined): ParsedResultRow {
-  if (row == null || typeof row !== "object") {
-    return {
+type MappingValue = (typeof COLUMN_MAPPINGS)[number]["value"];
+
+const NUM_FIELDS = new Set<MappingValue>([
+  "snatch_best",
+  "snatch_rank",
+  "cj_best",
+  "cj_rank",
+  "total_weight",
+  "total_rank",
+]);
+
+function gridToResults(
+  grid: string[][],
+  mappings: MappingValue[]
+): ParsedResultRow[] {
+  return grid.map((row) => {
+    const out: ParsedResultRow = {
       athlete_name: "",
       category: null,
       age_grade: null,
@@ -28,29 +53,36 @@ function safeRow(row: ParsedResultRow | null | undefined): ParsedResultRow {
       total_weight: null,
       total_rank: null,
     };
-  }
-  return {
-    athlete_name: cellValue(row.athlete_name),
-    category: row.category == null ? null : cellValue(row.category),
-    age_grade: row.age_grade == null ? null : cellValue(row.age_grade),
-    snatch_best: typeof row.snatch_best === "number" && Number.isFinite(row.snatch_best) ? row.snatch_best : null,
-    snatch_rank: typeof row.snatch_rank === "number" && Number.isFinite(row.snatch_rank) ? row.snatch_rank : null,
-    cj_best: typeof row.cj_best === "number" && Number.isFinite(row.cj_best) ? row.cj_best : null,
-    cj_rank: typeof row.cj_rank === "number" && Number.isFinite(row.cj_rank) ? row.cj_rank : null,
-    total_weight: typeof row.total_weight === "number" && Number.isFinite(row.total_weight) ? row.total_weight : null,
-    total_rank: typeof row.total_rank === "number" && Number.isFinite(row.total_rank) ? row.total_rank : null,
-  };
+    mappings.forEach((mapping, colIdx) => {
+      if (mapping === "ignore") return;
+      const raw = (row[colIdx] ?? "").trim();
+      if (mapping === "athlete_name") {
+        out.athlete_name = raw;
+      } else if (mapping === "category" || mapping === "age_grade") {
+        out[mapping] = raw || null;
+      } else if (NUM_FIELDS.has(mapping)) {
+        const n = Number(raw);
+        (out as Record<string, unknown>)[mapping] =
+          Number.isFinite(n) ? n : null;
+      }
+    });
+    return out;
+  });
 }
 
 export function RegisterTab() {
   const [file, setFile] = useState<File | null>(null);
-  const [rows, setRows] = useState<ParsedResultRow[] | null>(null);
+  const [grid, setGrid] = useState<string[][] | null>(null);
+  const [mappings, setMappings] = useState<MappingValue[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [competitionYear, setCompetitionYear] = useState<string>(() =>
     String(new Date().getFullYear())
   );
   const [competitionName, setCompetitionName] = useState("");
-  const [saveMessage, setSaveMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  const [saveMessage, setSaveMessage] = useState<{
+    type: "ok" | "error";
+    text: string;
+  } | null>(null);
   const [isParsing, startParseTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
 
@@ -59,7 +91,6 @@ export function RegisterTab() {
     setFile(f ?? null);
     setParseError(null);
     setSaveMessage(null);
-    if (!rows && !f) setRows(null);
   };
 
   const handleParse = () => {
@@ -71,66 +102,115 @@ export function RegisterTab() {
     startParseTransition(async () => {
       try {
         const result = await parsePdf(fd);
-        if (!result) {
-          setParseError("データの抽出に失敗しました。");
-          setRows(null);
+        if (!result || !result.success) {
+          setParseError(
+            (!result ? null : "error" in result ? result.error : null) ??
+              "PDFの解析に失敗しました。"
+          );
+          setGrid(null);
+          setMappings([]);
           return;
         }
-        if (result.success) {
-          const rawRows = result.rows;
-          if (Array.isArray(rawRows)) {
-            setRows(rawRows);
-            setParseError(null);
-          } else {
-            setParseError("データの抽出に失敗しました。");
-            setRows(null);
-          }
-        } else {
-          setParseError(result.error ?? "データの抽出に失敗しました。");
-          setRows(null);
-        }
+        const g = result.grid;
+        setGrid(g);
+        setMappings(g.length > 0 ? g[0].map(() => "ignore" as MappingValue) : []);
+        setParseError(null);
       } catch {
-        setParseError("データの抽出に失敗しました。");
-        setRows(null);
+        setParseError("PDFの解析に失敗しました。");
+        setGrid(null);
+        setMappings([]);
       }
     });
   };
 
-  const updateRow = (index: number, field: keyof ParsedResultRow, value: string | number | null) => {
-    setRows((prev) => {
-      const list = prev ?? [];
-      if (!Array.isArray(list) || index < 0 || index >= list.length) return prev;
-      const next = [...list];
-      const r = safeRow(next[index]);
-      if (field === "athlete_name") r.athlete_name = String(value ?? "").trim();
-      else if (field === "category") r.category = value === "" ? null : String(value).trim();
-      else if (field === "age_grade") r.age_grade = value === "" ? null : String(value).trim();
-      else if (field === "snatch_best" || field === "snatch_rank" || field === "cj_best" || field === "cj_rank" || field === "total_weight" || field === "total_rank") {
-        const n = value === "" || value === null ? null : Number(value);
-        (r as Record<string, unknown>)[field] = Number.isFinite(n) ? n : null;
-      }
-      next[index] = r;
+  const updateCell = useCallback(
+    (rowIdx: number, colIdx: number, value: string) => {
+      setGrid((prev) => {
+        if (!prev) return prev;
+        const next = prev.map((r) => [...r]);
+        next[rowIdx][colIdx] = value;
+        return next;
+      });
+    },
+    []
+  );
+
+  const deleteRow = useCallback((rowIdx: number) => {
+    setGrid((prev) => (prev ? prev.filter((_, i) => i !== rowIdx) : prev));
+  }, []);
+
+  const deleteColumn = useCallback((colIdx: number) => {
+    setGrid((prev) =>
+      prev ? prev.map((row) => row.filter((_, i) => i !== colIdx)) : prev
+    );
+    setMappings((prev) => prev.filter((_, i) => i !== colIdx));
+  }, []);
+
+  const moveColumn = useCallback((colIdx: number, direction: -1 | 1) => {
+    const targetIdx = colIdx + direction;
+    setGrid((prev) => {
+      if (!prev) return prev;
+      return prev.map((row) => {
+        const next = [...row];
+        [next[colIdx], next[targetIdx]] = [next[targetIdx], next[colIdx]];
+        return next;
+      });
+    });
+    setMappings((prev) => {
+      const next = [...prev];
+      [next[colIdx], next[targetIdx]] = [next[targetIdx], next[colIdx]];
       return next;
     });
-  };
+  }, []);
+
+  const updateMapping = useCallback(
+    (colIdx: number, value: MappingValue) => {
+      setMappings((prev) => {
+        const next = [...prev];
+        next[colIdx] = value;
+        return next;
+      });
+    },
+    []
+  );
 
   const handleSave = () => {
-    const list = rows ?? [];
-    if (!Array.isArray(list) || list.length === 0) {
+    if (!grid || grid.length === 0) {
       setSaveMessage({ type: "error", text: "保存するデータがありません。" });
+      return;
+    }
+    const hasMapping = mappings.some((m) => m !== "ignore");
+    if (!hasMapping) {
+      setSaveMessage({
+        type: "error",
+        text: "少なくとも1つの列にマッピングを設定してください。",
+      });
       return;
     }
     const year = parseInt(competitionYear, 10);
     if (!Number.isFinite(year) || year < 1900 || year > 2100) {
-      setSaveMessage({ type: "error", text: "対象年度は1900〜2100の数値を入力してください。" });
+      setSaveMessage({
+        type: "error",
+        text: "対象年度は1900〜2100の数値を入力してください。",
+      });
+      return;
+    }
+    if (!competitionName.trim()) {
+      setSaveMessage({ type: "error", text: "大会名を入力してください。" });
       return;
     }
     setSaveMessage(null);
     startSaveTransition(async () => {
-      const result = await saveCompetitionAndResults(year, competitionName.trim(), list);
+      const rows = gridToResults(grid, mappings);
+      const result = await saveCompetitionAndResults(
+        year,
+        competitionName.trim(),
+        rows
+      );
       if (result.success) {
         setSaveMessage({ type: "ok", text: "データベースに保存しました。" });
-        setRows(null);
+        setGrid(null);
+        setMappings([]);
         setCompetitionName("");
       } else {
         setSaveMessage({ type: "error", text: result.error });
@@ -138,13 +218,15 @@ export function RegisterTab() {
     });
   };
 
+  const colCount = mappings.length;
+
   return (
     <section className="space-y-6 rounded-lg border border-zinc-200 bg-zinc-50/50 p-6 dark:border-zinc-800 dark:bg-zinc-900/30">
       <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
         データ登録（PDF読み込み）
       </h2>
 
-      {/* PDFアップロード */}
+      {/* PDF upload */}
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
@@ -171,132 +253,163 @@ export function RegisterTab() {
           {isParsing ? "解析中…" : "PDFを解析"}
         </button>
       </div>
+
       {parseError && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
           {parseError}
         </p>
       )}
 
-      {/* 確認・修正テーブル */}
-      {(() => {
-        const safeRows = Array.isArray(rows) ? rows : [];
-        if (safeRows.length === 0) return null;
-        return (
+      {/* Spreadsheet-like editor */}
+      {grid && grid.length > 0 && (
         <>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            下表で内容を確認・修正し、対象年度と大会名を入力してから「データベースに保存」を押してください。
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              PDFから <strong>{grid.length}</strong> 行 ×{" "}
+              <strong>{colCount}</strong> 列のデータを検出しました。
+              不要な行・列を削除し、各列のマッピングを設定してから保存してください。
+            </p>
+            <div className="flex gap-2 text-xs text-zinc-500 dark:text-zinc-500">
+              <span className="inline-flex items-center gap-1">
+                <Trash2 className="size-3" /> 行・列を削除
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <ChevronLeft className="size-3" />
+                <ChevronRight className="size-3" /> 列を移動
+              </span>
+            </div>
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-            <table className="min-w-[720px] border-collapse text-sm">
+            <table className="border-collapse text-sm">
+              {/* Column mapping row */}
               <thead>
+                <tr className="border-b border-zinc-300 bg-blue-50 dark:border-zinc-600 dark:bg-blue-950/40">
+                  <th className="sticky left-0 z-10 border-r border-zinc-200 bg-blue-50 px-1 py-1 dark:border-zinc-700 dark:bg-blue-950/40">
+                    <span className="text-[10px] font-medium text-zinc-400">
+                      マッピング
+                    </span>
+                  </th>
+                  {mappings.map((mapping, colIdx) => (
+                    <th key={colIdx} className="px-1 py-1">
+                      <div className="flex flex-col items-center gap-1">
+                        <select
+                          value={mapping}
+                          onChange={(e) =>
+                            updateMapping(
+                              colIdx,
+                              e.target.value as MappingValue
+                            )
+                          }
+                          className={`w-full min-w-[7rem] rounded border px-1 py-0.5 text-[11px] ${
+                            mapping === "ignore"
+                              ? "border-zinc-300 bg-zinc-50 text-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-500"
+                              : "border-blue-400 bg-blue-50 font-semibold text-blue-700 dark:border-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
+                          }`}
+                        >
+                          {COLUMN_MAPPINGS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            disabled={colIdx === 0}
+                            onClick={() => moveColumn(colIdx, -1)}
+                            className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 disabled:opacity-30 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                            title="列を左へ移動"
+                          >
+                            <ChevronLeft className="size-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteColumn(colIdx)}
+                            className="rounded p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-300"
+                            title="列を削除"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={colIdx === colCount - 1}
+                            onClick={() => moveColumn(colIdx, 1)}
+                            className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 disabled:opacity-30 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                            title="列を右へ移動"
+                          >
+                            <ChevronRight className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+                {/* Column index header */}
                 <tr className="border-b border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
-                  <th className="px-2 py-2 text-left font-medium text-zinc-700 dark:text-zinc-300">選手名</th>
-                  <th className="px-2 py-2 text-left font-medium text-zinc-700 dark:text-zinc-300">階級</th>
-                  <th className="px-2 py-2 text-left font-medium text-zinc-700 dark:text-zinc-300">学年/年齢</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">スナッチ(kg)</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">スナッチ順位</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">C&amp;J(kg)</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">C&amp;J順位</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">トータル(kg)</th>
-                  <th className="px-2 py-2 text-right font-medium text-zinc-700 dark:text-zinc-300">トータル順位</th>
+                  <th className="sticky left-0 z-10 border-r border-zinc-200 bg-zinc-100 px-2 py-1 text-center text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800">
+                    #
+                  </th>
+                  {mappings.map((_, colIdx) => (
+                    <th
+                      key={colIdx}
+                      className="px-2 py-1 text-center text-[10px] font-medium text-zinc-500"
+                    >
+                      列{colIdx + 1}
+                    </th>
+                  ))}
                 </tr>
               </thead>
+
               <tbody>
-                {safeRows.map((row, i) => {
-                  const r = safeRow(row);
-                  return (
+                {grid.map((row, rowIdx) => (
                   <tr
-                    key={i}
-                    className="border-b border-zinc-100 dark:border-zinc-700/70"
+                    key={rowIdx}
+                    className="border-b border-zinc-100 hover:bg-zinc-50/80 dark:border-zinc-700/50 dark:hover:bg-zinc-800/50"
                   >
-                    <td className="px-2 py-1">
-                      <input
-                        type="text"
-                        value={r.athlete_name}
-                        onChange={(e) => updateRow(i, "athlete_name", e.target.value)}
-                        className="w-full min-w-[6rem] rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
+                    <td className="sticky left-0 z-10 border-r border-zinc-200 bg-white px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => deleteRow(rowIdx)}
+                          className="rounded p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-300"
+                          title="行を削除"
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                        <span className="w-5 text-center text-[10px] text-zinc-400">
+                          {rowIdx + 1}
+                        </span>
+                      </div>
                     </td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="text"
-                        value={cellValue(r.category)}
-                        onChange={(e) => updateRow(i, "category", e.target.value || null)}
-                        className="w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="text"
-                        value={cellValue(r.age_grade)}
-                        onChange={(e) => updateRow(i, "age_grade", e.target.value || null)}
-                        className="w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={cellValue(r.snatch_best)}
-                        onChange={(e) => updateRow(i, "snatch_best", e.target.value === "" ? null : e.target.value)}
-                        className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cellValue(r.snatch_rank)}
-                        onChange={(e) => updateRow(i, "snatch_rank", e.target.value === "" ? null : e.target.value)}
-                        className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={cellValue(r.cj_best)}
-                        onChange={(e) => updateRow(i, "cj_best", e.target.value === "" ? null : e.target.value)}
-                        className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cellValue(r.cj_rank)}
-                        onChange={(e) => updateRow(i, "cj_rank", e.target.value === "" ? null : e.target.value)}
-                        className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={cellValue(r.total_weight)}
-                        onChange={(e) => updateRow(i, "total_weight", e.target.value === "" ? null : e.target.value)}
-                        className="w-16 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cellValue(r.total_rank)}
-                        onChange={(e) => updateRow(i, "total_rank", e.target.value === "" ? null : e.target.value)}
-                        className="w-14 rounded border border-zinc-300 bg-white px-2 py-1 text-right text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                      />
-                    </td>
+                    {row.map((cell, colIdx) => (
+                      <td key={colIdx} className="px-0.5 py-0.5">
+                        <input
+                          type="text"
+                          value={cell}
+                          onChange={(e) =>
+                            updateCell(rowIdx, colIdx, e.target.value)
+                          }
+                          className={`w-full min-w-[4rem] rounded border px-1.5 py-0.5 text-xs ${
+                            mappings[colIdx] === "ignore"
+                              ? "border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-500"
+                              : "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                          }`}
+                        />
+                      </td>
+                    ))}
                   </tr>
-                );})}
+                ))}
               </tbody>
             </table>
           </div>
 
-          {/* 対象年度・大会名・保存ボタン */}
+          {/* Year, competition name, save */}
           <div className="flex flex-wrap items-end gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
             <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">対象年度（西暦）</span>
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                対象年度（西暦）
+              </span>
               <input
                 type="number"
                 min={1900}
@@ -307,7 +420,9 @@ export function RegisterTab() {
               />
             </label>
             <label className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">大会名</span>
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                大会名
+              </span>
               <input
                 type="text"
                 value={competitionName}
@@ -331,8 +446,7 @@ export function RegisterTab() {
             </button>
           </div>
         </>
-        );
-      })()}
+      )}
 
       {saveMessage && (
         <p

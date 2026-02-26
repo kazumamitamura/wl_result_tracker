@@ -6,8 +6,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
-  // pdf-parse とその依存関係を Next.js のバンドルから除外し、Node.js ネイティブとして扱う
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
+  serverExternalPackages: ["@napi-rs/canvas"],
 };
 
 export default nextConfig;
