@@ -22,6 +22,7 @@ import { ArrowLeft, Download, Loader2, Trophy } from "lucide-react";
 export default function AnalysisPage() {
   const params = useParams();
   const id = typeof params?.id === "string" ? params.id : null;
+  const [gender, setGender] = useState<"male" | "female">("male");
   const [name, setName] = useState<string>("");
   const [data, setData] = useState<CompetitionAnalysisRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +39,7 @@ export default function AnalysisPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getCompetitionAnalysis(id).then((result) => {
+    getCompetitionAnalysis(id, gender).then((result) => {
       if (cancelled) return;
       if (result.success) {
         setName(result.competitionName);
@@ -52,7 +53,7 @@ export default function AnalysisPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, gender]);
 
   const handlePdfDownload = useCallback(async () => {
     const el = chartRef.current;
@@ -130,6 +131,39 @@ export default function AnalysisPage() {
               {name} — 階級別上位10名平均
             </h1>
           </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              className="flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-600 dark:bg-zinc-800"
+              role="tablist"
+              aria-label="性別"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={gender === "male"}
+                onClick={() => setGender("male")}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  gender === "male"
+                    ? "bg-white text-amber-700 shadow dark:bg-zinc-700 dark:text-amber-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+              >
+                男子
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={gender === "female"}
+                onClick={() => setGender("female")}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  gender === "female"
+                    ? "bg-white text-amber-700 shadow dark:bg-zinc-700 dark:text-amber-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+              >
+                女子
+              </button>
+            </div>
           <button
             type="button"
             onClick={handlePdfDownload}
@@ -152,11 +186,12 @@ export default function AnalysisPage() {
               MVPランキング（シンクレア）
             </Link>
           )}
+          </div>
         </div>
 
         {data.length === 0 ? (
           <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-            この大会には階級別の集計データがありません。
+            データがありません。
           </p>
         ) : (
           <div

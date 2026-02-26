@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseClient } from "@/lib/supabase";
+import { isFemaleCategory } from "@/lib/gender";
 
 export type CompetitionAnalysisRow = {
   category: string;
@@ -26,7 +27,8 @@ function categorySortKey(cat: string): number {
 }
 
 export async function getCompetitionAnalysis(
-  competitionId: string
+  competitionId: string,
+  gender?: "male" | "female"
 ): Promise<CompetitionAnalysisResult> {
   if (!competitionId.trim()) {
     return { success: false, error: "大会IDを指定してください。" };
@@ -57,12 +59,18 @@ export async function getCompetitionAnalysis(
       return { success: false, error: resError.message };
     }
 
-    const rows = (results ?? []) as Array<{
+    let rows = (results ?? []) as Array<{
       category: string | null;
       snatch_best: number | null;
       cj_best: number | null;
       total_weight: number | null;
     }>;
+
+    if (gender === "female") {
+      rows = rows.filter((r) => isFemaleCategory(r.category));
+    } else if (gender === "male") {
+      rows = rows.filter((r) => !isFemaleCategory(r.category));
+    }
 
     const byCategory = new Map<
       string,

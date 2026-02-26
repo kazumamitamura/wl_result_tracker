@@ -6,16 +6,21 @@ import { useParams } from "next/navigation";
 import { getCompetitionResultsForMvp } from "@/app/actions/get-competition-mvp";
 import type { MvpResultRow } from "@/app/actions/get-competition-mvp";
 import { calculateSinclair, parseBodyweightFromCategory } from "@/lib/sinclair";
+import { isFemaleCategory } from "@/lib/gender";
 import { ArrowLeft, Trophy } from "lucide-react";
 
 type MvpRow = MvpResultRow & {
   bodyweight: number;
   sinclair: number;
+  isFemale: boolean;
 };
+
+type GenderTab = "all" | "male" | "female";
 
 export default function SinclairMvpPage() {
   const params = useParams();
   const id = typeof params?.id === "string" ? params.id : null;
+  const [genderTab, setGenderTab] = useState<GenderTab>("all");
   const [competitionName, setCompetitionName] = useState("");
   const [rows, setRows] = useState<MvpRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,11 +43,12 @@ export default function SinclairMvpPage() {
           .map((r) => {
             const total = r.total_weight != null ? Number(r.total_weight) : 0;
             const bodyweight = parseBodyweightFromCategory(r.category);
+            const isFemale = isFemaleCategory(r.category);
             const sinclair =
               total > 0 && bodyweight > 0
-                ? calculateSinclair(total, bodyweight, false)
+                ? calculateSinclair(total, bodyweight, isFemale)
                 : 0;
-            return { ...r, bodyweight, sinclair };
+            return { ...r, bodyweight, sinclair, isFemale };
           })
           .filter((r) => r.sinclair > 0)
           .sort((a, b) => b.sinclair - a.sinclair);
@@ -57,6 +63,13 @@ export default function SinclairMvpPage() {
       cancelled = true;
     };
   }, [id]);
+
+  const filteredRows =
+    genderTab === "all"
+      ? rows
+      : genderTab === "female"
+        ? rows.filter((r) => r.isFemale)
+        : rows.filter((r) => !r.isFemale);
 
   if (loading) {
     return (
@@ -103,11 +116,37 @@ export default function SinclairMvpPage() {
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             IWF 2021-2024 係数で算出。体重は階級から推定しています。
           </p>
+          <div
+            className="mt-3 flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-600 dark:bg-zinc-800"
+            role="tablist"
+            aria-label="表示"
+          >
+            {(["all", "male", "female"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={genderTab === tab}
+                onClick={() => setGenderTab(tab)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  genderTab === tab
+                    ? "bg-white text-amber-700 shadow dark:bg-zinc-700 dark:text-amber-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+              >
+                {tab === "all" ? "総合" : tab === "male" ? "男子" : "女子"}
+              </button>
+            ))}
+          </div>
         </div>
 
         {rows.length === 0 ? (
           <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
             シンクレアを算出できるデータがありません（トータル・階級が必須です）。
+          </p>
+        ) : filteredRows.length === 0 ? (
+          <p className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+            データがありません。
           </p>
         ) : (
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
@@ -136,7 +175,7 @@ export default function SinclairMvpPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, index) => {
+                  {filteredRows.map((row, index) => {
                     const rank = index + 1;
                     const medal =
                       rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : null;
