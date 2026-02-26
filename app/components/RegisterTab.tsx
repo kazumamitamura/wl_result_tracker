@@ -13,6 +13,10 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+/* ------------------------------------------------------------------ */
+/*  Column mapping definitions                                        */
+/* ------------------------------------------------------------------ */
+
 const COLUMN_MAPPINGS = [
   { value: "ignore", label: "無視する" },
   { value: "athlete_name", label: "選手名" },
@@ -36,6 +40,28 @@ const NUM_FIELDS = new Set<MappingValue>([
   "total_weight",
   "total_rank",
 ]);
+
+/** スマート抽出（14列）時のデフォルトマッピング */
+const SMART_DEFAULT_MAPPINGS: MappingValue[] = [
+  "category",      // 階級
+  "ignore",        // No.
+  "athlete_name",  // 氏名
+  "ignore",        // 都道府県
+  "ignore",        // 所属名
+  "age_grade",     // 学年
+  "ignore",        // 生年
+  "ignore",        // 体重
+  "snatch_best",   // Sベスト
+  "snatch_rank",   // S順位
+  "cj_best",       // CJベスト
+  "cj_rank",       // CJ順位
+  "total_weight",  // トータル
+  "total_rank",    // T順位
+];
+
+/* ------------------------------------------------------------------ */
+/*  Grid → DB rows conversion                                        */
+/* ------------------------------------------------------------------ */
 
 function gridToResults(
   grid: string[][],
@@ -62,17 +88,23 @@ function gridToResults(
         out[mapping] = raw || null;
       } else if (NUM_FIELDS.has(mapping)) {
         const n = Number(raw);
-        (out as Record<string, unknown>)[mapping] =
-          Number.isFinite(n) ? n : null;
+        (out as Record<string, unknown>)[mapping] = Number.isFinite(n)
+          ? n
+          : null;
       }
     });
     return out;
   });
 }
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
+
 export function RegisterTab() {
   const [file, setFile] = useState<File | null>(null);
   const [grid, setGrid] = useState<string[][] | null>(null);
+  const [headers, setHeaders] = useState<string[]>([]);
   const [mappings, setMappings] = useState<MappingValue[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [competitionYear, setCompetitionYear] = useState<string>(() =>
@@ -85,6 +117,8 @@ export function RegisterTab() {
   } | null>(null);
   const [isParsing, startParseTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
+
+  /* ---- handlers ---- */
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -108,16 +142,30 @@ export function RegisterTab() {
               "PDFの解析に失敗しました。"
           );
           setGrid(null);
+          setHeaders([]);
           setMappings([]);
           return;
         }
         const g = result.grid;
+        const h = result.headers;
         setGrid(g);
-        setMappings(g.length > 0 ? g[0].map(() => "ignore" as MappingValue) : []);
+        setHeaders(h);
+
+        const isSmart =
+          h.length === SMART_DEFAULT_MAPPINGS.length &&
+          h[0] === "階級";
+        setMappings(
+          isSmart
+            ? [...SMART_DEFAULT_MAPPINGS]
+            : g.length > 0
+              ? g[0].map(() => "ignore" as MappingValue)
+              : []
+        );
         setParseError(null);
       } catch {
         setParseError("PDFの解析に失敗しました。");
         setGrid(null);
+        setHeaders([]);
         setMappings([]);
       }
     });
@@ -143,24 +191,20 @@ export function RegisterTab() {
     setGrid((prev) =>
       prev ? prev.map((row) => row.filter((_, i) => i !== colIdx)) : prev
     );
+    setHeaders((prev) => prev.filter((_, i) => i !== colIdx));
     setMappings((prev) => prev.filter((_, i) => i !== colIdx));
   }, []);
 
   const moveColumn = useCallback((colIdx: number, direction: -1 | 1) => {
-    const targetIdx = colIdx + direction;
-    setGrid((prev) => {
-      if (!prev) return prev;
-      return prev.map((row) => {
-        const next = [...row];
-        [next[colIdx], next[targetIdx]] = [next[targetIdx], next[colIdx]];
-        return next;
-      });
-    });
-    setMappings((prev) => {
-      const next = [...prev];
-      [next[colIdx], next[targetIdx]] = [next[targetIdx], next[colIdx]];
-      return next;
-    });
+    const target = colIdx + direction;
+    const swap = <T,>(arr: T[]) => {
+      const n = [...arr];
+      [n[colIdx], n[target]] = [n[target], n[colIdx]];
+      return n;
+    };
+    setGrid((prev) => (prev ? prev.map((row) => swap(row)) : prev));
+    setHeaders(swap);
+    setMappings(swap);
   }, []);
 
   const updateMapping = useCallback(
@@ -210,6 +254,7 @@ export function RegisterTab() {
       if (result.success) {
         setSaveMessage({ type: "ok", text: "データベースに保存しました。" });
         setGrid(null);
+        setHeaders([]);
         setMappings([]);
         setCompetitionName("");
       } else {
@@ -219,6 +264,8 @@ export function RegisterTab() {
   };
 
   const colCount = mappings.length;
+
+  /* ---- render ---- */
 
   return (
     <section className="space-y-6 rounded-lg border border-zinc-200 bg-zinc-50/50 p-6 dark:border-zinc-800 dark:bg-zinc-900/30">
@@ -260,16 +307,16 @@ export function RegisterTab() {
         </p>
       )}
 
-      {/* Spreadsheet-like editor */}
+      {/* Spreadsheet editor */}
       {grid && grid.length > 0 && (
         <>
           <div className="space-y-2">
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               PDFから <strong>{grid.length}</strong> 行 ×{" "}
               <strong>{colCount}</strong> 列のデータを検出しました。
-              不要な行・列を削除し、各列のマッピングを設定してから保存してください。
+              不要な行・列を削除し、各列のマッピングを確認してから保存してください。
             </p>
-            <div className="flex gap-2 text-xs text-zinc-500 dark:text-zinc-500">
+            <div className="flex gap-3 text-xs text-zinc-500">
               <span className="inline-flex items-center gap-1">
                 <Trash2 className="size-3" /> 行・列を削除
               </span>
@@ -282,24 +329,21 @@ export function RegisterTab() {
 
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
             <table className="border-collapse text-sm">
-              {/* Column mapping row */}
               <thead>
+                {/* Row 1: Column mapping selects + controls */}
                 <tr className="border-b border-zinc-300 bg-blue-50 dark:border-zinc-600 dark:bg-blue-950/40">
                   <th className="sticky left-0 z-10 border-r border-zinc-200 bg-blue-50 px-1 py-1 dark:border-zinc-700 dark:bg-blue-950/40">
                     <span className="text-[10px] font-medium text-zinc-400">
                       マッピング
                     </span>
                   </th>
-                  {mappings.map((mapping, colIdx) => (
-                    <th key={colIdx} className="px-1 py-1">
+                  {mappings.map((mapping, ci) => (
+                    <th key={ci} className="px-1 py-1">
                       <div className="flex flex-col items-center gap-1">
                         <select
                           value={mapping}
                           onChange={(e) =>
-                            updateMapping(
-                              colIdx,
-                              e.target.value as MappingValue
-                            )
+                            updateMapping(ci, e.target.value as MappingValue)
                           }
                           className={`w-full min-w-[7rem] rounded border px-1 py-0.5 text-[11px] ${
                             mapping === "ignore"
@@ -316,8 +360,8 @@ export function RegisterTab() {
                         <div className="flex items-center gap-0.5">
                           <button
                             type="button"
-                            disabled={colIdx === 0}
-                            onClick={() => moveColumn(colIdx, -1)}
+                            disabled={ci === 0}
+                            onClick={() => moveColumn(ci, -1)}
                             className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 disabled:opacity-30 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
                             title="列を左へ移動"
                           >
@@ -325,7 +369,7 @@ export function RegisterTab() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => deleteColumn(colIdx)}
+                            onClick={() => deleteColumn(ci)}
                             className="rounded p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-300"
                             title="列を削除"
                           >
@@ -333,8 +377,8 @@ export function RegisterTab() {
                           </button>
                           <button
                             type="button"
-                            disabled={colIdx === colCount - 1}
-                            onClick={() => moveColumn(colIdx, 1)}
+                            disabled={ci === colCount - 1}
+                            onClick={() => moveColumn(ci, 1)}
                             className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 disabled:opacity-30 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
                             title="列を右へ移動"
                           >
@@ -345,53 +389,54 @@ export function RegisterTab() {
                     </th>
                   ))}
                 </tr>
-                {/* Column index header */}
+
+                {/* Row 2: Column header labels */}
                 <tr className="border-b border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
                   <th className="sticky left-0 z-10 border-r border-zinc-200 bg-zinc-100 px-2 py-1 text-center text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800">
                     #
                   </th>
-                  {mappings.map((_, colIdx) => (
+                  {headers.map((header, ci) => (
                     <th
-                      key={colIdx}
-                      className="px-2 py-1 text-center text-[10px] font-medium text-zinc-500"
+                      key={ci}
+                      className="whitespace-nowrap px-2 py-1 text-center text-[10px] font-medium text-zinc-500"
                     >
-                      列{colIdx + 1}
+                      {header}
                     </th>
                   ))}
                 </tr>
               </thead>
 
               <tbody>
-                {grid.map((row, rowIdx) => (
+                {grid.map((row, ri) => (
                   <tr
-                    key={rowIdx}
+                    key={ri}
                     className="border-b border-zinc-100 hover:bg-zinc-50/80 dark:border-zinc-700/50 dark:hover:bg-zinc-800/50"
                   >
                     <td className="sticky left-0 z-10 border-r border-zinc-200 bg-white px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-900">
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => deleteRow(rowIdx)}
+                          onClick={() => deleteRow(ri)}
                           className="rounded p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-300"
                           title="行を削除"
                         >
                           <Trash2 className="size-3" />
                         </button>
                         <span className="w-5 text-center text-[10px] text-zinc-400">
-                          {rowIdx + 1}
+                          {ri + 1}
                         </span>
                       </div>
                     </td>
-                    {row.map((cell, colIdx) => (
-                      <td key={colIdx} className="px-0.5 py-0.5">
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-0.5 py-0.5">
                         <input
                           type="text"
                           value={cell}
                           onChange={(e) =>
-                            updateCell(rowIdx, colIdx, e.target.value)
+                            updateCell(ri, ci, e.target.value)
                           }
                           className={`w-full min-w-[4rem] rounded border px-1.5 py-0.5 text-xs ${
-                            mappings[colIdx] === "ignore"
+                            mappings[ci] === "ignore"
                               ? "border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-500"
                               : "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                           }`}
