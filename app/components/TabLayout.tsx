@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FileUp, Search } from "lucide-react";
 import { RegisterTab } from "./RegisterTab";
 import { SearchTab } from "./SearchTab";
+import { CompetitionListSection } from "./CompetitionListSection";
 
 type TabId = "register" | "search";
 
@@ -43,6 +44,7 @@ export function TabLayout() {
       {/* メインエリア */}
       <main className="flex-1 bg-white dark:bg-zinc-950">
         <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+          <CompetitionListSection />
           {activeTab === "register" && <RegisterTab />}
           {activeTab === "search" && <SearchTab />}
         </div>

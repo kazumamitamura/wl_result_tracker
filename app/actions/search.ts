@@ -22,6 +22,36 @@ export type SearchFilters = {
 
 const MAX_RESULTS = 1000;
 
+export type CompetitionListItem = {
+  id: string;
+  competition_year: number;
+  name: string;
+};
+
+export async function getCompetitionsList(): Promise<
+  { success: true; data: CompetitionListItem[] } | { success: false; error: string }
+> {
+  try {
+    const supabase = createSupabaseClient();
+
+    const { data, error } = await supabase
+      .from("wlre_competitions")
+      .select("id, competition_year, name")
+      .order("competition_year", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const list = (data ?? []) as CompetitionListItem[];
+    return { success: true, data: list };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { success: false, error: `大会一覧の取得に失敗しました: ${message}` };
+  }
+}
+
 export async function getFilterOptions(): Promise<
   { success: true; data: FilterOptions } | { success: false; error: string }
 > {
