@@ -26,10 +26,13 @@ const BIRTH_YEAR_RE = /^(19|20)\d{2}$/;
 const BODY_WEIGHT_RE = /^\d{2,3}\.\d{2}$/;
 const RECORD_NUM_RE = /^\d{1,3}$/;
 
-/** ページヘッダー: 女子セクション開始 (例: W55, 女子55) */
-const WOMEN_HEADER_RE = /^(W|女(子)?)\d{2,3}$/i;
-/** ページヘッダー: 男子セクション開始 (例: M55, 男子55) */
-const MEN_HEADER_RE = /^(M|男(子)?)\d{2,3}$/i;
+const SCHOOL_SUFFIXES = "大学|国際|商業|工業|高校|中|学園|女子|農業|水産";
+
+const CATS_PATTERN = "45|49|55|59|61|64|67|71|73|76|81|89|96|102|109|\\+87|\\+109";
+const W_CAT_FULL_RE = new RegExp(`^(?:W|女(?:子)?)(${CATS_PATTERN})\\s*[Kk]g$`, "i");
+const M_CAT_FULL_RE = new RegExp(`^(?:M|男(?:子)?)(${CATS_PATTERN})\\s*[Kk]g$`, "i");
+const W_CAT_NUM_RE = new RegExp(`^(?:W|女(?:子)?)(${CATS_PATTERN})$`, "i");
+const M_CAT_NUM_RE = new RegExp(`^(?:M|男(?:子)?)(${CATS_PATTERN})$`, "i");
 
 const PREFECTURES = [
   "北海道", "青森", "岩手", "宮城", "秋田", "山形", "福島",
@@ -40,11 +43,12 @@ const PREFECTURES = [
   "徳島", "香川", "愛媛", "高知", "福岡", "佐賀", "長崎",
   "熊本", "大分", "宮崎", "鹿児島", "沖縄",
 ];
-const PREF_DIRECT_RE = new RegExp(`(${PREFECTURES.join("|")})`);
+const PREF_DIRECT_RE = new RegExp(
+  `(${PREFECTURES.join("|")})(?!${SCHOOL_SUFFIXES})`
+);
 
-/** 生年前の infoString を No. / 氏名 / 都道府県 / 所属 / 学年 に一発分割 */
 const INFO_REGEX = new RegExp(
-  `^\\s*(\\d+)\\s*(.+?)\\s*(${PREFECTURES.join("|")})\\s*(.+?)\\s*(\\d)\\s*$`
+  `^\\s*(\\d+)\\s*(.+?)\\s*(${PREFECTURES.join("|")})(?!${SCHOOL_SUFFIXES})\\s*(.+?)\\s*(\\d)\\s*$`
 );
 
 function hasCJK(s: string): boolean {
@@ -104,7 +108,7 @@ function extractInfoFields(raw: string): {
   } else {
     for (const pref of PREFECTURES) {
       const pattern = [...pref].join("\\s*");
-      const re = new RegExp(pattern);
+      const re = new RegExp(pattern + `(?!${SCHOOL_SUFFIXES})`);
       const m = rest.match(re);
       if (m && m.index !== undefined) {
         name = rest.slice(0, m.index).trim();
@@ -152,6 +156,53 @@ function extractRecordNumbers(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Gender & category detection helper                                */
+/* ------------------------------------------------------------------ */
+
+function detectGenderAndCategory(
+  tokens: string[],
+  i: number,
+  currentIsWomen: boolean,
+): { isWomen: boolean; category: string | null; consumed: number } | null {
+  const t = tokens[i];
+  const next = i + 1 < tokens.length ? tokens[i + 1] : "";
+
+  const wFull = t.match(W_CAT_FULL_RE);
+  if (wFull) return { isWomen: true, category: "W" + wFull[1] + "Kg", consumed: 1 };
+
+  const mFull = t.match(M_CAT_FULL_RE);
+  if (mFull) return { isWomen: false, category: mFull[1] + "Kg", consumed: 1 };
+
+  const wNum = t.match(W_CAT_NUM_RE);
+  if (wNum) {
+    if (/^[Kk]g$/i.test(next))
+      return { isWomen: true, category: "W" + wNum[1] + next, consumed: 2 };
+    return { isWomen: true, category: null, consumed: 1 };
+  }
+
+  const mNum = t.match(M_CAT_NUM_RE);
+  if (mNum) {
+    if (/^[Kk]g$/i.test(next))
+      return { isWomen: false, category: mNum[1] + next, consumed: 2 };
+    return { isWomen: false, category: null, consumed: 1 };
+  }
+
+  if (/^女(?:子)?$/.test(t)) return { isWomen: true, category: null, consumed: 1 };
+  if (/^男(?:子)?$/.test(t)) return { isWomen: false, category: null, consumed: 1 };
+
+  if (CATEGORY_RE.test(t)) {
+    return { isWomen: currentIsWomen, category: (currentIsWomen ? "W" : "") + t, consumed: 1 };
+  }
+
+  if (CATEGORY_NUM_RE.test(t) && /^[Kk]g$/i.test(next)) {
+    const cat = t + next;
+    return { isWomen: currentIsWomen, category: (currentIsWomen ? "W" : "") + cat, consumed: 2 };
+  }
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Strategy 1: Body-weight anchor (\d{2,3}\.\d{2})                   */
 /* ------------------------------------------------------------------ */
 
@@ -162,30 +213,12 @@ function extractByBodyWeight(tokens: string[]): string[][] {
   let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
-    if (WOMEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = true;
-      continue;
-    }
-    if (MEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = false;
-      continue;
-    }
-
-    if (CATEGORY_RE.test(tokens[i])) {
-      currentCategory = tokens[i];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 1;
-      continue;
-    }
-    if (
-      CATEGORY_NUM_RE.test(tokens[i]) &&
-      i + 1 < tokens.length &&
-      /^[Kk]g$/i.test(tokens[i + 1])
-    ) {
-      currentCategory = tokens[i] + tokens[i + 1];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 2;
-      i++;
+    const det = detectGenderAndCategory(tokens, i, isWomenSection);
+    if (det) {
+      isWomenSection = det.isWomen;
+      if (det.category) currentCategory = det.category;
+      scanStart = i + det.consumed;
+      i += det.consumed - 1;
       continue;
     }
 
@@ -235,30 +268,12 @@ function extractByBirthYear(tokens: string[]): string[][] {
   let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
-    if (WOMEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = true;
-      continue;
-    }
-    if (MEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = false;
-      continue;
-    }
-
-    if (CATEGORY_RE.test(tokens[i])) {
-      currentCategory = tokens[i];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 1;
-      continue;
-    }
-    if (
-      CATEGORY_NUM_RE.test(tokens[i]) &&
-      i + 1 < tokens.length &&
-      /^[Kk]g$/i.test(tokens[i + 1])
-    ) {
-      currentCategory = tokens[i] + tokens[i + 1];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 2;
-      i++;
+    const det = detectGenderAndCategory(tokens, i, isWomenSection);
+    if (det) {
+      isWomenSection = det.isWomen;
+      if (det.category) currentCategory = det.category;
+      scanStart = i + det.consumed;
+      i += det.consumed - 1;
       continue;
     }
 
@@ -303,30 +318,12 @@ function extractByPrefecture(tokens: string[]): string[][] {
   let isWomenSection = false;
 
   for (let i = 0; i < tokens.length; i++) {
-    if (WOMEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = true;
-      continue;
-    }
-    if (MEN_HEADER_RE.test(tokens[i])) {
-      isWomenSection = false;
-      continue;
-    }
-
-    if (CATEGORY_RE.test(tokens[i])) {
-      currentCategory = tokens[i];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 1;
-      continue;
-    }
-    if (
-      CATEGORY_NUM_RE.test(tokens[i]) &&
-      i + 1 < tokens.length &&
-      /^[Kk]g$/i.test(tokens[i + 1])
-    ) {
-      currentCategory = tokens[i] + tokens[i + 1];
-      if (isWomenSection) currentCategory = "W" + currentCategory;
-      scanStart = i + 2;
-      i++;
+    const det = detectGenderAndCategory(tokens, i, isWomenSection);
+    if (det) {
+      isWomenSection = det.isWomen;
+      if (det.category) currentCategory = det.category;
+      scanStart = i + det.consumed;
+      i += det.consumed - 1;
       continue;
     }
 
